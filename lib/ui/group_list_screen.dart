@@ -1,6 +1,8 @@
+import 'package:e2ee_demo/models/group_summary_model.dart';
 import 'package:e2ee_demo/services/app_service.dart';
 import 'package:e2ee_demo/ui/chat_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:graphql_flutter/graphql_flutter.dart';
 
 class GroupListScreen extends StatefulWidget {
   final AppServices services;
@@ -13,13 +15,27 @@ class GroupListScreen extends StatefulWidget {
 
 class _GroupListScreenState extends State<GroupListScreen> {
   List<Map<String, dynamic>> _groups = [];
+
   bool _loading = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _loadGroups();
+    // _loadGroups();
+    // getUserGroups();
+
+    getUserGroups().then((groups) {
+      setState(() {
+        _groups = groups.map((g) => {'id': g.id, 'name': g.name}).toList();
+        _loading = false;
+      });
+    }).catchError((e) {
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    });
   }
 
   Future<void> _loadGroups() async {
@@ -30,41 +46,54 @@ class _GroupListScreenState extends State<GroupListScreen> {
 
     try {
       const query = r'''
-    query GetGroupMembers($groupId: String!, $page: Int!, $limit: Int!) {
-      getGroupMembers(groupId: $groupId, page: $page, limit: $limit) {
-        data {
-          items {
-            userId
-            username
-            deviceIds
+        query GetUserGroups($input: GetUserGroupsInput!) {
+          getUserGroups(input: $input) {
+            success
+            message
+            data {
+              items {
+                id
+                name
+                description
+                avatar
+              }
+              total
+              page
+              limit
+            }
           }
         }
-      }
-    }
-    ''';
+      ''';
 
       final result = await widget.services.gql.query(
         query,
         variables: {
-          'page': 1.0,    // double
-          'limit': 100.0, // double
+          'input': {
+            'page': 1.0,
+            'limit': 100.0,
+          },
         },
       );
 
-      if (result['getUserGroups'] != null) {
-        final response = result['getUserGroups'];
+      final response = result['getUserGroups'];
 
+      if (response != null) {
         if (response['success'] == true && response['data'] != null) {
           final items = response['data']['items'] as List<dynamic>?;
           setState(() {
-            _groups = items?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? [];
+            _groups = items
+                    ?.map((e) => Map<String, dynamic>.from(e as Map))
+                    .toList() ??
+                [];
             _loading = false;
           });
         } else {
-          throw Exception(response['error'] ?? 'Failed to load groups');
+          throw Exception(response['message'] ??
+              response['error'] ??
+              'Failed to load groups');
         }
       } else {
-        throw Exception('Invalid response format');
+        throw Exception('Invalid response format: getUserGroups not found');
       }
     } catch (e) {
       setState(() {
@@ -72,6 +101,39 @@ class _GroupListScreenState extends State<GroupListScreen> {
         _loading = false;
       });
     }
+  }
+
+  // Giả định hàm Service (cần GraphQLClient)
+// Hàm này lấy client từ context.
+  Future<List<GroupSummary>> getUserGroups() async {
+    const query = r'''
+    query GetUserGroups($page: Int!, $limit: Int!) {
+      getUserGroups(input: { page: $page, limit: $limit }) {
+        data {
+          items {
+            id
+            name
+          }
+        }
+      }
+    }
+  ''';
+
+    final result = await widget.services.gql.runQuery(
+      query,
+      variables: {'page': 1, 'limit': 50},
+    );
+
+    if (result.hasException) {
+      debugPrint('getUserGroups exception: ${result.exception}');
+      return [];
+    }
+    final data = result.data?['getUserGroups']?['data']?['items'] as List?;
+    if (data == null) return [];
+
+    return data
+        .map((e) => GroupSummary.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
   @override
@@ -86,7 +148,20 @@ class _GroupListScreenState extends State<GroupListScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadGroups,
+            onPressed: () {
+              getUserGroups().then((groups) {
+                setState(() {
+                  _groups =
+                      groups.map((g) => {'id': g.id, 'name': g.name}).toList();
+                  _loading = false;
+                });
+              }).catchError((e) {
+                setState(() {
+                  _error = e.toString();
+                  _loading = false;
+                });
+              });
+            },
           ),
         ],
       ),
@@ -297,7 +372,8 @@ class _GroupListScreenState extends State<GroupListScreen> {
         }
         await _loadGroups();
       } else {
-        throw Exception(result['createGroup']?['message'] ?? 'Failed to create group');
+        throw Exception(
+            result['createGroup']?['message'] ?? 'Failed to create group');
       }
     } catch (e) {
       if (mounted) {

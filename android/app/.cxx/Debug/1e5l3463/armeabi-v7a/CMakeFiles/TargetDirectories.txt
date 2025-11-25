@@ -1,0 +1,2 @@
+/Users/xuanthanh/Du_an/e2ee_chat/android/app/.cxx/Debug/1e5l3463/armeabi-v7a/CMakeFiles/edit_cache.dir
+/Users/xuanthanh/Du_an/e2ee_chat/android/app/.cxx/Debug/1e5l3463/armeabi-v7a/CMakeFiles/rebuild_cache.dir

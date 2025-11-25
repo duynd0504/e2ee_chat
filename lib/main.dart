@@ -7,6 +7,7 @@ import 'services/graphql_service.dart';
 import 'services/signal_client.dart';
 import 'ui/group_list_screen.dart';
 import 'services/auth_queries.dart';
+
 const String loginEndpoint = 'http://139.162.33.89:3001/graphql';
 const String graphQLEndpoint = 'http://139.162.33.89:3002/graphql';
 
@@ -58,9 +59,10 @@ class _E2EEChatRootState extends State<E2EEChatRoot> {
   void initState() {
     super.initState();
     // Debug: Pre-fill with test account
-    accountController = TextEditingController(text: 'rottoummutuwa-8519@yopmail.com');
-    passwordController = TextEditingController(text: 'Test77@@');
-    deviceController = TextEditingController(text: _deviceId ?? const Uuid().v4());
+    accountController = TextEditingController(text: '+2348066701122');
+    passwordController = TextEditingController(text: 'Teeymix95@');
+    deviceController =
+        TextEditingController(text: _deviceId ?? const Uuid().v4());
   }
 
   @override
@@ -211,7 +213,7 @@ class _E2EEChatRootState extends State<E2EEChatRoot> {
     setState(() => _initializing = true);
 
     try {
-      final httpLink = HttpLink(loginEndpoint);   // DÙNG PORT 3001 CHO LOGIN
+      final httpLink = HttpLink(loginEndpoint); // DÙNG PORT 3001 CHO LOGIN
       final loginClient = GraphQLClient(
         link: httpLink,
         cache: GraphQLCache(store: InMemoryStore()),
@@ -235,7 +237,8 @@ class _E2EEChatRootState extends State<E2EEChatRoot> {
 
       final data = result.data?['login'];
       if (data == null || data['data'] == null) {
-        throw Exception('Login failed: ${data?['message'] ?? 'No data returned'}');
+        throw Exception(
+            'Login failed: ${data?['message'] ?? 'No data returned'}');
       }
 
       final accessToken = data['data']['accessToken'] as String;
@@ -243,7 +246,7 @@ class _E2EEChatRootState extends State<E2EEChatRoot> {
 
       // 2. Tạo authenticated client
       final authedHttpLink = HttpLink(
-        graphQLEndpoint,   // DÙNG PORT 3002 CHO GRAPHQL AUTHED
+        graphQLEndpoint, // DÙNG PORT 3002 CHO GRAPHQL AUTHED
         defaultHeaders: {
           'Authorization': 'Bearer $accessToken',
         },

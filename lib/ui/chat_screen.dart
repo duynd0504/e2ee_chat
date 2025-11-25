@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:e2ee_demo/services/app_service.dart';
 import 'package:flutter/material.dart';
 
-
 class ChatMessage {
   final String id;
   final String groupId;
@@ -51,10 +50,19 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _loadMessages();
+    // getGroupMembers(widget.groupId).then((members) {
+    //   debugPrint('Group members: $members');
+    // });
+    _loadMessages(
+      widget.groupId,
+    );
     // Poll messages mỗi 3 giây
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      _loadMessages();
+      // getMessagesForGroup(widget.groupId).then((msgs) {
+      //   debugPrint(
+      //       'Polled ${msgs.length} messages for group ${widget.groupId}');
+      // });
+      // _loadMessages(widget.groupId);
     });
   }
 
@@ -66,11 +74,77 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  Future<void> _loadMessages() async {
+  Future<List<Map<String, dynamic>>> getGroupMembers(String groupId) async {
+    const query = r'''
+        query GetGroupMembers($groupId: String!, $page: Float!, $limit: Float!) {
+          getGroupMembers(groupId: $groupId, page: $page, limit: $limit) {
+            data {
+              items {
+                userId
+                username
+                deviceIds
+              }
+            }
+          }
+        }
+        ''';
+
+    final result = await widget.services.gql.runQuery(query, variables: {
+      'groupId': groupId,
+      'page': 1,
+      'limit': 100,
+    });
+
+    if (result.hasException) {
+      debugPrint('getGroupMembers exception: ${result.exception}');
+      return [];
+    }
+    final items =
+        result.data?['getGroupMembers']?['data']?['items'] as List<dynamic>?;
+    if (items == null) return [];
+    return items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<void> _loadMessages(String groupId) async {
     if (_loading) return;
     _loading = true;
 
     try {
+      // const query = r'''
+      //   query GetMessages($input: GetMessagesInput!) {
+      //     getMessages(input: $input) {
+      //       data {
+      //         items {
+      //           id
+      //           content
+      //           contentType
+      //           ciphertextBase64
+      //           senderId
+      //           senderDeviceId
+      //           groupId
+      //           createdAt
+      //         }
+      //       }
+      //       success
+      //       error
+      //     }
+      //   }
+      // ''';
+
+      // final result = await widget.services.gql.query(query, variables: {
+      //   'input': {
+      //     'groupId': widget.groupId,
+      //     'page': 1,
+      //     'limit': 200,
+      //   }
+      // });
+
+      // final data = result['getMessages'];
+      // if (data == null || data['success'] != true) {
+      //   debugPrint('getMessages failed: ${data?['error']}');
+      //   return;
+      // }
+
       const query = r'''
         query GetMessages($input: GetMessagesInput!) {
           getMessages(input: $input) {
@@ -90,21 +164,31 @@ class _ChatScreenState extends State<ChatScreen> {
             error
           }
         }
-      ''';
+        ''';
 
-      final result = await widget.services.gql.query(query, variables: {
+      final result = await widget.services.gql.runQuery(query, variables: {
         'input': {
-          'groupId': widget.groupId,
+          'groupId': groupId,
           'page': 1,
           'limit': 200,
         }
       });
 
-      final data = result['getMessages'];
+      if (result.hasException) {
+        debugPrint('getMessages exception: ${result.exception}');
+        // return [];
+      }
+
+      final data = result.data?['getMessages'];
       if (data == null || data['success'] != true) {
         debugPrint('getMessages failed: ${data?['error']}');
         return;
       }
+
+      // final data = result.data?['getMessages'];
+      // if (data == null || data['success'] != true) return [];
+      // final items = data['data']?['items'] as List<dynamic>?;
+      // if (items == null) return [];
 
       final items = data['data']?['items'] as List<dynamic>? ?? [];
       final msgs = <ChatMessage>[];
@@ -126,7 +210,8 @@ class _ChatScreenState extends State<ChatScreen> {
         if (contentType == 'E2EE') {
           final ct = m['ciphertextBase64'] as String?;
           if (ct != null && ct.isNotEmpty) {
-            plaintext = await widget.services.signalClient.tryDecryptGroupMessage(
+            plaintext =
+                await widget.services.signalClient.tryDecryptGroupMessage(
               groupId: groupId,
               senderId: senderId,
               senderDeviceId: senderDeviceId,
@@ -190,6 +275,48 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<List<Map<String, dynamic>>> getMessagesForGroup(String groupId) async {
+    const query = r'''
+        query GetMessages($input: GetMessagesInput!) {
+          getMessages(input: $input) {
+            data {
+              items {
+                id
+                content
+                contentType
+                ciphertextBase64
+                senderId
+                senderDeviceId
+                groupId
+                createdAt
+              }
+            }
+            success
+            error
+          }
+        }
+        ''';
+
+    final result = await widget.services.gql.runQuery(query, variables: {
+      'input': {
+        'groupId': groupId,
+        'page': 1,
+        'limit': 200,
+      }
+    });
+
+    if (result.hasException) {
+      debugPrint('getMessages exception: ${result.exception}');
+      return [];
+    }
+
+    final data = result.data?['getMessages'];
+    if (data == null || data['success'] != true) return [];
+    final items = data['data']?['items'] as List<dynamic>?;
+    if (items == null) return [];
+    return items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
@@ -209,7 +336,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       // Encrypt message với Signal group cipher
-      final ciphertextBytes = await widget.services.signalClient.encryptGroupPlaintext(
+      final ciphertextBytes =
+          await widget.services.signalClient.encryptGroupPlaintext(
         groupId: widget.groupId,
         plaintext: text,
       );
@@ -239,7 +367,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
 
       // Reload messages
-      await _loadMessages();
+      await _loadMessages(widget.groupId);
       _scrollToBottom();
     } catch (e) {
       if (mounted) {
@@ -269,7 +397,7 @@ class _ChatScreenState extends State<ChatScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadMessages,
+            onPressed: () => _loadMessages(widget.groupId),
           ),
         ],
       ),
@@ -278,32 +406,34 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: _messages.isEmpty
                 ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.lock_outline, size: 64, color: Colors.grey[400]),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No messages yet',
-                    style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Send a message to start',
-                    style: TextStyle(color: Colors.grey[500]),
-                  ),
-                ],
-              ),
-            )
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.lock_outline,
+                            size: 64, color: Colors.grey[400]),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No messages yet',
+                          style:
+                              TextStyle(fontSize: 16, color: Colors.grey[600]),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Send a message to start',
+                          style: TextStyle(color: Colors.grey[500]),
+                        ),
+                      ],
+                    ),
+                  )
                 : ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(12),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final m = _messages[index];
-                return _buildMessageBubble(m);
-              },
-            ),
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _messages.length,
+                    itemBuilder: (context, index) {
+                      final m = _messages[index];
+                      return _buildMessageBubble(m);
+                    },
+                  ),
           ),
           const Divider(height: 1),
           _buildInputBar(),
@@ -397,17 +527,17 @@ class _ChatScreenState extends State<ChatScreen> {
             backgroundColor: Colors.blue,
             child: _sending
                 ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                color: Colors.white,
-                strokeWidth: 2,
-              ),
-            )
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
                 : IconButton(
-              icon: const Icon(Icons.send, color: Colors.white),
-              onPressed: _sendMessage,
-            ),
+                    icon: const Icon(Icons.send, color: Colors.white),
+                    onPressed: _sendMessage,
+                  ),
           ),
         ],
       ),

@@ -194,11 +194,16 @@ mutation RegisterSignalKey($input: SignalKeyCreateInput!) {
 
     final firstPreKey = Map<String, dynamic>.from(oneTimeList.first as Map);
     final preKeyId = firstPreKey['uid'] as int;
+
+    ///
+    ///đoạn này đang bị map sai cần chờ be
+    ///
     final preKeyPublicBytes = base64Decode('1');
 
     final signedPreKeyBytes = base64Decode(signalKey['signedPreKey'] as String);
     final signedPreKeySigBytes =
         base64Decode(signalKey['signedPreKeySig'] as String);
+
     final identityKeyBytes = base64Decode(signalKey['identityKey'] as String);
 
     final remoteIdentityKey = signal.IdentityKey(

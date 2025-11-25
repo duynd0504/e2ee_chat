@@ -128,4 +128,94 @@ class GraphQLService {
 
     return await client.query(options);
   }
+
+  Future<QueryResult> runMutation(
+    String document, {
+    Map<String, dynamic>? variables,
+  }) {
+    _logCurlRequest('MUTATION', document, variables);
+    final options = MutationOptions(
+      document: gql(document),
+      variables: variables ?? <String, dynamic>{},
+    );
+    return client.mutate(options);
+  }
+
+  /// Send encrypted message with E2EE or E2EE_SYSTEM content type
+  // Future<Map<String, dynamic>> sendEncryptedMessage({
+  //   required String? groupId,
+  //   required String? recipientId,
+  //   required String deviceId,
+  //   required String ciphertextBase64,
+  //   required String contentType, // 'E2EE' or 'E2EE_SYSTEM'
+  // }) async {
+  //   const mutation = r'''
+  //     mutation SendMessageWithContent($input: SendGroupMessageBySenderKeyInput!) {
+  //       sendMessageWithContent(input: $input) {
+  //         success
+  //         error
+  //         message
+  //         data {
+  //           id
+  //           groupId
+  //           senderId
+  //           senderDeviceId
+  //           contentType
+  //           createdAt
+  //         }
+  //       }
+  //     }
+  //   ''';
+
+  //   return await mutate(mutation, variables: {
+  //     'input': {
+  //       'groupId': groupId,
+  //       'recipientId': recipientId,
+  //       'deviceId': deviceId,
+  //       'ciphertextBase64': ciphertextBase64,
+  //       'contentType': contentType,
+  //     },
+  //   });
+  // }
+  Future<void> sendEncryptedMessage({
+    required String? groupId,
+    required String? recipientId,
+    required String deviceId,
+    required String ciphertextBase64,
+    required String contentType,
+  }) async {
+    try {
+      const mutation = r'''
+        mutation SendMessageWithContent($input: SendGroupMessageBySenderKeyInput!) {
+          sendMessageWithContent(input: $input) {
+            success
+            error
+            data {
+              id
+            }
+          }
+        }
+        ''';
+
+      final input = <String, dynamic>{
+        'groupId': groupId,
+        'recipientId': recipientId,
+        'deviceId': deviceId,
+        'ciphertextBase64': ciphertextBase64,
+        'contentType': contentType,
+      };
+
+      final result = await runMutation(mutation, variables: {'input': input});
+      if (result.hasException) {
+        debugPrint('sendMessageWithContent exception: ${result.exception}');
+      } else {
+        final data = result.data?['sendMessageWithContent'];
+        if (data == null || data['success'] != true) {
+          debugPrint('sendMessageWithContent failed: $data');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error in sendEncryptedMessage: $e');
+    }
+  }
 }

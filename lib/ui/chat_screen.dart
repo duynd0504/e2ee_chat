@@ -91,8 +91,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final result = await widget.services.gql.runQuery(query, variables: {
       'groupId': groupId,
-      'page': 1,
-      'limit': 100,
+      'page': 1.0,
+      'limit': 100.0,
     });
 
     if (result.hasException) {
@@ -327,15 +327,59 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // Future<void> _sendMessage() async {
+  //   final text = _input.text.trim();
+  //   if (text.isEmpty || _sending) return;
+
+  //   setState(() => _sending = true);
+  //   _input.clear();
+
+  //   try {
+  //     // Encrypt message với Signal group cipher
+  //     final ciphertextBytes =
+  //         await widget.services.signalClient.encryptGroupPlaintext(
+  //       groupId: widget.groupId,
+  //       plaintext: text,
+  //     );
+  //     final ctBase64 = base64Encode(ciphertextBytes);
+
+  //     // Gửi encrypted message lên backend với type E2EE
+  //     final result = await widget.services.gql.sendEncryptedMessage(
+  //       groupId: widget.groupId,
+  //       recipientId: null,
+  //       deviceId: widget.services.myDeviceId,
+  //       ciphertextBase64: ctBase64,
+  //       contentType: 'E2EE',
+  //     );
+
+  //     // Kiểm tra kết quả
+  //     final sendResult = result['sendMessageWithContent'];
+  //     if (sendResult == null || sendResult['success'] != true) {
+  //       throw Exception(sendResult?['error'] ??
+  //           sendResult?['message'] ??
+  //           'Failed to send message');
+  //     }
+
+  //     // Reload messages
+  //     await _loadMessages(widget.groupId);
+  //     _scrollToBottom();
+  //   } catch (e) {
+  //     if (mounted) {
+  //       print('Error sending message: $e');
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(content: Text('Failed to send: $e')),
+  //       );
+  //     }
+  //   } finally {
+  //     setState(() => _sending = false);
+  //   }
+  // }
+
   Future<void> _sendMessage() async {
     final text = _input.text.trim();
-    if (text.isEmpty || _sending) return;
-
-    setState(() => _sending = true);
+    if (text.isEmpty) return;
     _input.clear();
-
     try {
-      // Encrypt message với Signal group cipher
       final ciphertextBytes =
           await widget.services.signalClient.encryptGroupPlaintext(
         groupId: widget.groupId,
@@ -343,40 +387,21 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       final ctBase64 = base64Encode(ciphertextBytes);
 
-      // Gửi lên backend
-      const mutation = r'''
-        mutation SendMessageWithContent($input: SendGroupMessageBySenderKeyInput!) {
-          sendMessageWithContent(input: $input) {
-            success
-            error
-            data {
-              id
-            }
-          }
-        }
-      ''';
-
-      await widget.services.gql.mutate(mutation, variables: {
-        'input': {
-          'groupId': widget.groupId,
-          'recipientId': null,
-          'deviceId': widget.services.myDeviceId,
-          'ciphertextBase64': ctBase64,
-          'contentType': 'E2EE',
-        }
-      });
-
-      // Reload messages
-      await _loadMessages(widget.groupId);
-      _scrollToBottom();
+      await widget.services.gql.sendEncryptedMessage(
+        groupId: widget.groupId,
+        recipientId: null,
+        deviceId: widget.services.myDeviceId,
+        ciphertextBase64: ctBase64,
+        contentType: 'E2EE',
+      );
+      // await _loadMessages(
+      //   widget.groupId,
+      // );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to send: $e')),
-        );
-      }
-    } finally {
-      setState(() => _sending = false);
+      print('Error sending message: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send: $e')),
+      );
     }
   }
 

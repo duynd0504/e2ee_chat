@@ -454,25 +454,24 @@ class _GroupListScreenState extends State<GroupListScreen> {
     try {
       // Mutation theo đúng schema backend - dùng runMutation thay vì mutate
       const mutation = r'''
-        mutation CreateGroup($input: CreateGroupInput!) {
-          createGroup(input: $input) {
-            success
-            message
-            data {
-              id
-              name
-              description
-            }
-          }
-        }
-      ''';
+  mutation CreateGroup($input: CreateGroupInput!) {
+    createGroup(input: $input) {
+      success
+      data {
+        id
+        name
+      }
+    }
+  }
+''';
+
+
 
       final result = await widget.services.gql.runMutation(
         mutation,
         variables: {
           'input': {
             'name': name,
-            'description': description.isEmpty ? null : description,
           }
         },
       );

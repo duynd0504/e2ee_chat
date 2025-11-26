@@ -39,8 +39,6 @@ class SignalClient {
 
   final Map<String, signal.GroupCipher> _groupCiphers = {};
   final Map<String, signal.SessionCipher> _sessionCipherCache = {};
-
-  // Track which groups we've sent SKDM for
   final Set<String> _distributedGroups = {};
 
   SignalClient({
@@ -49,14 +47,13 @@ class SignalClient {
     required this.myDeviceId,
   });
 
+  /// Khởi tạo local Signal state và đăng ký keys
   Future<void> initialize() async {
     await _installLocalSignalState();
-
     try {
       await _registerKeysToBackend();
     } catch (e) {
-      debugPrint('⚠️ Key registration skipped (mutation not found): $e');
-      debugPrint('You can continue using the app, but E2EE may not work fully');
+      debugPrint('⚠️ Key registration skipped: $e');
     }
   }
 
@@ -94,24 +91,18 @@ class SignalClient {
       final preKey = await _preKeyStore.loadPreKey(id);
       oneTimePreKeys.add({
         'uid': id,
-        'publicKey': base64Encode(preKey
-            .getKeyPair()
-            .publicKey
-            .serialize()
-            .toList()),
+        'publicKey': base64Encode(preKey.getKeyPair().publicKey.serialize().toList()),
       });
     }
 
     const mutation = r'''
-        mutation RegisterSignalKey($input: SignalKeyCreateInput!) {
-          registerSignalKey(input: $input) {
-            success
-            data {
-              id
-            }
-          }
+      mutation RegisterSignalKey($input: SignalKeyCreateInput!) {
+        registerSignalKey(input: $input) {
+          success
+          data { id }
         }
-        ''';
+      }
+    ''';
 
     final variables = {
       'input': {
@@ -122,99 +113,73 @@ class SignalClient {
         'deviceId': myDeviceId,
       }
     };
+
     final result = await gql.runMutation(mutation, variables: variables);
     if (result.hasException) {
       debugPrint('registerSignalKey exception: ${result.exception}');
       return;
     }
+
     final data = result.data?['registerSignalKey'];
     if (data == null || data['success'] != true) {
       debugPrint('registerSignalKey failed: $data');
     }
   }
 
-  int _deviceAddressId(String deviceId) {
-    final hash = deviceId.hashCode;
-    return hash & 0x7fffffff;
-  }
+  int _deviceAddressId(String deviceId) => deviceId.hashCode & 0x7fffffff;
+  signal.SignalProtocolAddress _addressFor(String userId, String deviceId) =>
+      signal.SignalProtocolAddress(userId, _deviceAddressId(deviceId));
 
-  signal.SignalProtocolAddress _addressFor(String userId, String deviceId) {
-    return signal.SignalProtocolAddress(userId, _deviceAddressId(deviceId));
-  }
-
+  /// Đảm bảo có session cipher cho 1:1
   Future<signal.SessionCipher> _ensureSessionCipherFor(
-      String remoteUserId,
-      String remoteDeviceId,
-      ) async {
+      String remoteUserId, String remoteDeviceId) async {
     final key = '$remoteUserId::$remoteDeviceId';
-    final existing = _sessionCipherCache[key];
-    if (existing != null) return existing;
+    if (_sessionCipherCache.containsKey(key)) return _sessionCipherCache[key]!;
 
     const query = r'''
-    query GetSignalKey($input: SignalKeyGetInput!) {
-      getSignalKey(input: $input) {
-        success
-        data {
-          items {
-            id
-            identityKey
-            signedPreKey
-            signedPreKeySig
-            oneTimePreKeys {
-              uid
-              publicKey
-            }
+      query GetSignalKey($input: SignalKeyGetInput!) {
+        getSignalKey(input: $input) {
+          success
+          data { items {
+            id identityKey signedPreKey signedPreKeySig
+            oneTimePreKeys { uid publicKey }
             deviceId
-          }
+          } }
         }
       }
-    }
     ''';
 
     final result = await gql.query(query, variables: {
-      'input': {
-        'userId': remoteUserId,
-        'deviceId': remoteDeviceId,
-        'page': 1,
-        'limit': 1,
-      }
+      'input': {'userId': remoteUserId, 'deviceId': remoteDeviceId, 'page': 1, 'limit': 1}
     });
 
     final wrapper = result['getSignalKey'];
-    if (wrapper == null || wrapper['success'] != true) {
+    if (wrapper == null || wrapper['success'] != true)
       throw Exception('No SignalKey for $remoteUserId/$remoteDeviceId');
-    }
 
     final items = wrapper['data']?['items'] as List<dynamic>?;
-    if (items == null || items.isEmpty) {
+    if (items == null || items.isEmpty)
       throw Exception('No SignalKey items found');
-    }
 
     final signalKey = Map<String, dynamic>.from(items.first as Map);
     final oneTimeList = signalKey['oneTimePreKeys'] as List<dynamic>?;
-    if (oneTimeList == null || oneTimeList.isEmpty) {
-      throw Exception('Remote user has no one‑time prekeys');
-    }
+    if (oneTimeList == null || oneTimeList.isEmpty)
+      throw Exception('Remote user has no one-time prekeys');
 
     final firstPreKey = Map<String, dynamic>.from(oneTimeList.first as Map);
     final preKeyId = firstPreKey['uid'] as int;
     final preKeyPublicBytes = base64Decode(firstPreKey['publicKey'] as String);
-
     final signedPreKeyBytes = base64Decode(signalKey['signedPreKey'] as String);
-    final signedPreKeySigBytes =
-    base64Decode(signalKey['signedPreKeySig'] as String);
-
+    final signedPreKeySigBytes = base64Decode(signalKey['signedPreKeySig'] as String);
     final identityKeyBytes = base64Decode(signalKey['identityKey'] as String);
 
-    final remoteIdentityKey = signal.IdentityKey(
-        signal.DjbECPublicKey(Uint8List.fromList(identityKeyBytes)));
+    final remoteIdentityKey =
+    signal.IdentityKey(signal.DjbECPublicKey(Uint8List.fromList(identityKeyBytes)));
     final remoteSignedPreKey = signal.DjbECPublicKey(signedPreKeyBytes);
     final remotePreKey = signal.DjbECPublicKey(preKeyPublicBytes);
 
-    final remoteRegId = 1;
-
     final preKeyBundle = signal.PreKeyBundle(
-      remoteRegId,
+      1,
       _deviceAddressId(remoteDeviceId),
       preKeyId,
       remotePreKey,
@@ -224,119 +189,81 @@ class SignalClient {
       remoteIdentityKey,
     );
 
-    final remoteAddress = _addressFor(remoteUserId, remoteDeviceId);
-
     final builder = signal.SessionBuilder(
-      _sessionStore,
-      _preKeyStore,
-      _signedPreKeyStore,
-      _identityStore,
-      remoteAddress,
-    );
-
+        _sessionStore, _preKeyStore, _signedPreKeyStore, _identityStore, _addressFor(remoteUserId, remoteDeviceId));
     await builder.processPreKeyBundle(preKeyBundle);
 
     final cipher = signal.SessionCipher(
-      _sessionStore,
-      _preKeyStore,
-      _signedPreKeyStore,
-      _identityStore,
-      remoteAddress,
-    );
-
+        _sessionStore, _preKeyStore, _signedPreKeyStore, _identityStore, _addressFor(remoteUserId, remoteDeviceId));
     _sessionCipherCache[key] = cipher;
     return cipher;
   }
 
+  /// Encrypt 1:1
   Future<String> encryptToDevice({
     required String remoteUserId,
     required String remoteDeviceId,
     required AppMessageEnvelope envelope,
   }) async {
     final cipher = await _ensureSessionCipherFor(remoteUserId, remoteDeviceId);
-    final plaintext =
-    Uint8List.fromList(utf8.encode(jsonEncode(envelope.toJson())));
+    final plaintext = Uint8List.fromList(utf8.encode(jsonEncode(envelope.toJson())));
     final ciphertext = await cipher.encrypt(plaintext);
-    final serialized = ciphertext.serialize();
-    return base64Encode(serialized);
+    return base64Encode(ciphertext.serialize());
   }
 
-  Future<AppMessageEnvelope> decryptFromDevice({
+  /// Decrypt 1:1
+  Future<AppMessageEnvelope?> decryptFromDevice({
     required String remoteUserId,
     required String remoteDeviceId,
     required String ciphertextBase64,
   }) async {
-    final remoteAddress = _addressFor(remoteUserId, remoteDeviceId);
-    final cipher = signal.SessionCipher(
-      _sessionStore,
-      _preKeyStore,
-      _signedPreKeyStore,
-      _identityStore,
-      remoteAddress,
-    );
+    try {
+      final cipher = signal.SessionCipher(
+        _sessionStore,
+        _preKeyStore,
+        _signedPreKeyStore,
+        _identityStore,
+        _addressFor(remoteUserId, remoteDeviceId),
+      );
 
-    final bytes = Uint8List.fromList(base64Decode(ciphertextBase64));
-    final message = signal.PreKeySignalMessage(bytes);
+      final bytes = Uint8List.fromList(base64Decode(ciphertextBase64));
+      final message = signal.PreKeySignalMessage(bytes);
+      late Uint8List plaintext;
 
-    late Uint8List plaintext;
-    await cipher.decryptWithCallback(message, (Uint8List value) {
-      plaintext = value;
-    });
-
-    final jsonMap = jsonDecode(utf8.decode(plaintext)) as Map<String, dynamic>;
-    return AppMessageEnvelope.fromJson(jsonMap);
+      await cipher.decryptWithCallback(message, (v) => plaintext = v);
+      return AppMessageEnvelope.fromJson(jsonDecode(utf8.decode(plaintext)));
+    } catch (e, stackTrace) {
+      debugPrint('❌ decryptFromDevice failed: $e\n$stackTrace');
+      return null;
+    }
   }
 
-  signal.SenderKeyName _groupSenderKeyNameFor(
-      String groupId,
-      String senderUserId,
-      String senderDeviceId,
-      ) {
-    final addr = _addressFor(senderUserId, senderDeviceId);
-    return signal.SenderKeyName(groupId, addr);
+  signal.SenderKeyName _groupSenderKeyNameFor(String groupId, String senderUserId, String senderDeviceId) {
+    return signal.SenderKeyName(groupId, _addressFor(senderUserId, senderDeviceId));
   }
 
-  Future<signal.GroupCipher> _ensureGroupCipherForSender(
-      String groupId,
-      String senderUserId,
-      String senderDeviceId,
-      ) async {
+  Future<signal.GroupCipher> _ensureGroupCipherForSender(String groupId, String senderUserId, String senderDeviceId) async {
     final key = '$groupId::$senderUserId::$senderDeviceId';
-    final existing = _groupCiphers[key];
-    if (existing != null) return existing;
+    if (_groupCiphers.containsKey(key)) return _groupCiphers[key]!;
 
-    final senderKeyName =
-    _groupSenderKeyNameFor(groupId, senderUserId, senderDeviceId);
-    final cipher = signal.GroupCipher(_senderKeyStore, senderKeyName);
+    final cipher = signal.GroupCipher(_senderKeyStore, _groupSenderKeyNameFor(groupId, senderUserId, senderDeviceId));
     _groupCiphers[key] = cipher;
     return cipher;
   }
 
-  /// FIXED: Distribute sender key CHỈ MỘT LẦN cho mỗi group
+  /// Distribute sender key một lần cho group
   Future<void> _distributeSenderKeyOnce(String groupId) async {
-    // Nếu đã distribute rồi thì skip
-    if (_distributedGroups.contains(groupId)) {
-      debugPrint('✅ Sender key already distributed for group $groupId');
-      return;
-    }
-
-    debugPrint('🔧 Distributing sender key for group $groupId...');
+    if (_distributedGroups.contains(groupId)) return;
 
     final senderKeyName = _groupSenderKeyNameFor(groupId, myUserId, myDeviceId);
     final builder = signal.GroupSessionBuilder(_senderKeyStore);
-    final distribution = await builder.create(senderKeyName);
-    final distributionBytes = distribution.serialize();
+    final distributionBytes = (await builder.create(senderKeyName)).serialize();
 
-    // Lấy danh sách members
     final members = await getGroupMembers(groupId);
-
-    // Gửi SKDM cho tất cả devices của members khác
     for (final m in members) {
       final userId = m['userId'] as String;
-      if (userId == myUserId) continue; // Skip chính mình
-
-      final deviceIds = (m['deviceIds'] as List<dynamic>? ?? []).cast<String>().toList();
-
+      if (userId == myUserId) continue;
+      final deviceIds = (m['deviceIds'] as List<dynamic>? ?? []).cast<String>();
       for (final devId in deviceIds) {
         try {
           final envelope = AppMessageEnvelope(
@@ -349,78 +276,24 @@ class SignalClient {
             },
           );
 
-          final ct = await encryptToDevice(
-            remoteUserId: userId,
-            remoteDeviceId: devId,
-            envelope: envelope,
-          );
-
-          await gql.sendEncryptedMessage(
-            groupId: null,
-            recipientId: userId,
-            deviceId: myDeviceId,
-            ciphertextBase64: ct,
-            contentType: 'E2EE_SYSTEM',
-          );
-
-          debugPrint('✅ Sent SKDM to $userId ($devId)');
+          final ct = await encryptToDevice(remoteUserId: userId, remoteDeviceId: devId, envelope: envelope);
+          await gql.sendEncryptedMessage(groupId: null, recipientId: userId, deviceId: myDeviceId, ciphertextBase64: ct, contentType: 'E2EE_SYSTEM');
         } catch (e) {
           debugPrint('❌ Failed to send SKDM to $userId ($devId): $e');
         }
       }
     }
 
-    // Đánh dấu đã distribute
     _distributedGroups.add(groupId);
-    debugPrint('✅ Sender key distribution completed for group $groupId');
   }
 
-  Future<Uint8List> encryptGroupPlaintext({
-    required String groupId,
-    required String plaintext,
-  }) async {
-    // BƯỚC 1: Distribute sender key nếu chưa
+  Future<Uint8List> encryptGroupPlaintext({required String groupId, required String plaintext}) async {
     await _distributeSenderKeyOnce(groupId);
-
-    // BƯỚC 2: Encrypt message với group cipher
     final cipher = await _ensureGroupCipherForSender(groupId, myUserId, myDeviceId);
-    final ciphertext = await cipher.encrypt(Uint8List.fromList(utf8.encode(plaintext)));
-
-    debugPrint('✅ Group message encrypted, length: ${ciphertext.length}');
-    return ciphertext;
+    return await cipher.encrypt(Uint8List.fromList(utf8.encode(plaintext)));
   }
 
-  Future<List<Map<String, dynamic>>> getGroupMembers(String groupId) async {
-    const query = r'''
-        query GetGroupMembers($groupId: String!, $page: Float!, $limit: Float!) {
-          getGroupMembers(groupId: $groupId, page: $page, limit: $limit) {
-            data {
-              items {
-                userId
-                username
-                deviceIds
-              }
-            }
-          }
-        }
-        ''';
-
-    final result = await gql.runQuery(query, variables: {
-      'groupId': groupId,
-      'page': 1.0,
-      'limit': 100.0,
-    });
-
-    if (result.hasException) {
-      debugPrint('getGroupMembers exception: ${result.exception}');
-      return [];
-    }
-    final items =
-    result.data?['getGroupMembers']?['data']?['items'] as List<dynamic>?;
-    if (items == null) return [];
-    return items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-  }
-
+  /// Decrypt group message
   Future<String?> tryDecryptGroupMessage({
     required String groupId,
     required String senderId,
@@ -428,59 +301,54 @@ class SignalClient {
     required String ciphertextBase64,
   }) async {
     try {
-      debugPrint('🔍 Attempting to decrypt group message from $senderId ($senderDeviceId)');
-
       final cipher = await _ensureGroupCipherForSender(groupId, senderId, senderDeviceId);
-      final ciphertextBytes = Uint8List.fromList(base64Decode(ciphertextBase64));
-      final plaintextBytes = await cipher.decrypt(ciphertextBytes);
-      final plaintext = utf8.decode(plaintextBytes);
-
-      debugPrint('✅ Group message decrypted successfully: $plaintext');
-      return plaintext;
+      final plaintext = await cipher.decrypt(Uint8List.fromList(base64Decode(ciphertextBase64)));
+      return utf8.decode(plaintext);
     } catch (e, stackTrace) {
-      debugPrint('❌ Group decrypt failed: $e');
-      debugPrint('Stack trace: $stackTrace');
+      debugPrint('❌ Group decrypt failed: $e\n$stackTrace');
       return null;
     }
   }
 
-  Future<void> handleSystemMessage({
-    required String fromUserId,
-    required String fromDeviceId,
-    required String ciphertextBase64,
-  }) async {
+  Future<void> handleSystemMessage({required String fromUserId, required String fromDeviceId, required String ciphertextBase64}) async {
     try {
-      debugPrint('🔧 Processing system message from $fromUserId ($fromDeviceId)');
-
-      final envelope = await decryptFromDevice(
-        remoteUserId: fromUserId,
-        remoteDeviceId: fromDeviceId,
-        ciphertextBase64: ciphertextBase64,
-      );
-
-      if (envelope.type == 'skdm') {
-        final groupId = envelope.body['groupId'] as String;
+      final envelope = await decryptFromDevice(remoteUserId: fromUserId, remoteDeviceId: fromDeviceId, ciphertextBase64: ciphertextBase64);
+      if (envelope?.type == 'skdm') {
+        final groupId = envelope!.body['groupId'] as String;
         final senderUserId = envelope.body['senderUserId'] as String;
         final senderDeviceId = envelope.body['senderDeviceId'] as String;
-        final distributionBase64 = envelope.body['distributionMessageBase64'] as String;
-        final distributionBytes = base64Decode(distributionBase64);
+        final distributionBytes = base64Decode(envelope.body['distributionMessageBase64'] as String);
 
-        final senderKeyName = _groupSenderKeyNameFor(groupId, senderUserId, senderDeviceId);
-        final wrapper = signal.SenderKeyDistributionMessageWrapper.fromSerialized(distributionBytes);
         final builder = signal.GroupSessionBuilder(_senderKeyStore);
-        await builder.process(senderKeyName, wrapper);
-
-        debugPrint('✅ SKDM processed: group=$groupId, sender=$senderUserId ($senderDeviceId)');
+        await builder.process(_groupSenderKeyNameFor(groupId, senderUserId, senderDeviceId),
+            signal.SenderKeyDistributionMessageWrapper.fromSerialized(distributionBytes));
       }
     } catch (e, stackTrace) {
-      debugPrint('❌ handleSystemMessage failed: $e');
-      debugPrint('Stack trace: $stackTrace');
+      debugPrint('❌ handleSystemMessage failed: $e\n$stackTrace');
     }
   }
 
-  /// Reset sender key distribution state (useful for testing)
+  Future<List<Map<String, dynamic>>> getGroupMembers(String groupId) async {
+    const query = r'''
+      query GetGroupMembers($groupId: String!, $page: Float!, $limit: Float!) {
+        getGroupMembers(groupId: $groupId, page: $page, limit: $limit) {
+          data { items { userId username deviceIds } }
+        }
+      }
+    ''';
+
+    final result = await gql.runQuery(query, variables: {'groupId': groupId, 'page': 1.0, 'limit': 100.0});
+    if (result.hasException) {
+      debugPrint('getGroupMembers exception: ${result.exception}');
+      return [];
+    }
+
+    final items = result.data?['getGroupMembers']?['data']?['items'] as List<dynamic>?;
+    if (items == null) return [];
+    return items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
   void resetDistributionState() {
     _distributedGroups.clear();
-    debugPrint('🔄 Sender key distribution state reset');
   }
 }

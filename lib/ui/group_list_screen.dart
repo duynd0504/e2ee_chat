@@ -2,7 +2,7 @@ import 'package:e2ee_demo/models/group_summary_model.dart';
 import 'package:e2ee_demo/services/app_service.dart';
 import 'package:e2ee_demo/ui/chat_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:graphql_flutter/graphql_flutter.dart';
+import 'package:flutter/services.dart';
 
 class GroupListScreen extends StatefulWidget {
   final AppServices services;
@@ -22,9 +22,6 @@ class _GroupListScreenState extends State<GroupListScreen> {
   @override
   void initState() {
     super.initState();
-    // _loadGroups();
-    // getUserGroups();
-
     getUserGroups().then((groups) {
       setState(() {
         _groups = groups.map((g) => {'id': g.id, 'name': g.name}).toList();
@@ -45,56 +42,11 @@ class _GroupListScreenState extends State<GroupListScreen> {
     });
 
     try {
-      const query = r'''
-        query GetUserGroups($input: GetUserGroupsInput!) {
-          getUserGroups(input: $input) {
-            success
-            message
-            data {
-              items {
-                id
-                name
-                description
-                avatar
-              }
-              total
-              page
-              limit
-            }
-          }
-        }
-      ''';
-
-      final result = await widget.services.gql.query(
-        query,
-        variables: {
-          'input': {
-            'page': 1.0,
-            'limit': 100.0,
-          },
-        },
-      );
-
-      final response = result['getUserGroups'];
-
-      if (response != null) {
-        if (response['success'] == true && response['data'] != null) {
-          final items = response['data']['items'] as List<dynamic>?;
-          setState(() {
-            _groups = items
-                    ?.map((e) => Map<String, dynamic>.from(e as Map))
-                    .toList() ??
-                [];
-            _loading = false;
-          });
-        } else {
-          throw Exception(response['message'] ??
-              response['error'] ??
-              'Failed to load groups');
-        }
-      } else {
-        throw Exception('Invalid response format: getUserGroups not found');
-      }
+      final groups = await getUserGroups();
+      setState(() {
+        _groups = groups.map((g) => {'id': g.id, 'name': g.name}).toList();
+        _loading = false;
+      });
     } catch (e) {
       setState(() {
         _error = e.toString();
@@ -103,8 +55,6 @@ class _GroupListScreenState extends State<GroupListScreen> {
     }
   }
 
-  // Giả định hàm Service (cần GraphQLClient)
-// Hàm này lấy client từ context.
   Future<List<GroupSummary>> getUserGroups() async {
     const query = r'''
     query GetUserGroups($page: Int!, $limit: Int!) {
@@ -148,20 +98,7 @@ class _GroupListScreenState extends State<GroupListScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () {
-              getUserGroups().then((groups) {
-                setState(() {
-                  _groups =
-                      groups.map((g) => {'id': g.id, 'name': g.name}).toList();
-                  _loading = false;
-                });
-              }).catchError((e) {
-                setState(() {
-                  _error = e.toString();
-                  _loading = false;
-                });
-              });
-            },
+            onPressed: _loadGroups,
           ),
         ],
       ),
@@ -225,34 +162,40 @@ class _GroupListScreenState extends State<GroupListScreen> {
         itemCount: _groups.length,
         itemBuilder: (context, index) {
           final group = _groups[index];
-          return _buildGroupTile(group);
+          return _buildGroupTile(group, index);
         },
       ),
     );
   }
 
-  Widget _buildGroupTile(Map<String, dynamic> group) {
+  Widget _buildGroupTile(Map<String, dynamic> group, int index) {
     final groupName = group['name'] ?? 'Unnamed Group';
-    final groupId = group['id'];
+    final groupId = group['id'] as String;
+
+    // Tạo màu khác nhau cho mỗi group
+    final colors = [
+      Colors.blue,
+      Colors.green,
+      Colors.orange,
+      Colors.purple,
+      Colors.teal,
+      Colors.pink,
+    ];
+    final color = colors[index % colors.length];
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: Colors.blue[700],
-          child: group['avatar'] != null && group['avatar'].isNotEmpty
-              ? ClipOval(
-                  child: Image.network(
-                    group['avatar'],
-                    width: 40,
-                    height: 40,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return const Icon(Icons.group, color: Colors.white);
-                    },
-                  ),
-                )
-              : const Icon(Icons.group, color: Colors.white),
+          backgroundColor: color[700],
+          child: Text(
+            groupName.isNotEmpty ? groupName[0].toUpperCase() : 'G',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 20,
+            ),
+          ),
         ),
         title: Text(
           groupName,
@@ -261,15 +204,44 @@ class _GroupListScreenState extends State<GroupListScreen> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (group['description'] != null && group['description'].isNotEmpty)
-              Text(
-                group['description'],
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+            const SizedBox(height: 4),
+            // Hiển thị 8 ký tự đầu của Group ID
+            Text(
+              'ID: ${groupId.substring(0, 8)}...',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.grey[600],
+                fontFamily: 'monospace',
               ),
+            ),
           ],
         ),
-        trailing: const Icon(Icons.chevron_right),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Nút copy Group ID
+            IconButton(
+              icon: const Icon(Icons.copy, size: 18),
+              tooltip: 'Copy Group ID',
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: groupId));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Copied: $groupId'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+            ),
+            // Nút rename
+            IconButton(
+              icon: const Icon(Icons.edit, size: 18),
+              tooltip: 'Rename Group',
+              onPressed: () => _showRenameGroupDialog(groupId, groupName),
+            ),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
         onTap: () {
           Navigator.push(
             context,
@@ -282,8 +254,136 @@ class _GroupListScreenState extends State<GroupListScreen> {
             ),
           );
         },
+        onLongPress: () {
+          // Long press để show full info
+          _showGroupInfoDialog(groupId, groupName);
+        },
       ),
     );
+  }
+
+  void _showGroupInfoDialog(String groupId, String groupName) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Group Info'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Name: $groupName', style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            const Text('Group ID:', style: TextStyle(fontWeight: FontWeight.bold)),
+            SelectableText(
+              groupId,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: groupId));
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Group ID copied!')),
+              );
+            },
+            child: const Text('Copy ID'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRenameGroupDialog(String groupId, String currentName) {
+    final nameController = TextEditingController(text: currentName);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename Group'),
+        content: TextField(
+          controller: nameController,
+          decoration: const InputDecoration(
+            labelText: 'New Name',
+            hintText: 'Enter new group name',
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final newName = nameController.text.trim();
+              if (newName.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a name')),
+                );
+                return;
+              }
+              if (newName == currentName) {
+                Navigator.pop(context);
+                return;
+              }
+
+              Navigator.pop(context);
+              await _renameGroup(groupId, newName);
+            },
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _renameGroup(String groupId, String newName) async {
+    try {
+      const mutation = '''
+        mutation UpdateGroup(\$groupId: String!, \$name: String!) {
+          updateGroup(groupId: \$groupId, input: { name: \$name }) {
+            success
+            message
+          }
+        }
+      ''';
+
+      final result = await widget.services.gql.mutate(
+        mutation,
+        variables: {
+          'groupId': groupId,
+          'name': newName,
+        },
+      );
+
+      if (result['updateGroup']?['success'] == true) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Group renamed successfully')),
+          );
+        }
+        await _loadGroups();
+      } else {
+        throw Exception(
+            result['updateGroup']?['message'] ?? 'Failed to rename group');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
   }
 
   void _showCreateGroupDialog() {
@@ -303,6 +403,7 @@ class _GroupListScreenState extends State<GroupListScreen> {
                 labelText: 'Group Name',
                 hintText: 'Enter group name',
               ),
+              autofocus: true,
             ),
             const SizedBox(height: 12),
             TextField(

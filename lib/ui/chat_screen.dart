@@ -50,9 +50,6 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    // getGroupMembers(widget.groupId).then((members) {
-    //   debugPrint('Group members: $members');
-    // });
     _loadMessages(
       widget.groupId,
     );
@@ -61,11 +58,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _loadMessages(
         widget.groupId,
       );
-      // getMessagesForGroup(widget.groupId).then((msgs) {
-      //   debugPrint(
-      //       'Polled ${msgs.length} messages for group ${widget.groupId}');
-      // });
-      // _loadMessages(widget.groupId);
     });
   }
 
@@ -103,7 +95,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return [];
     }
     final items =
-        result.data?['getGroupMembers']?['data']?['items'] as List<dynamic>?;
+    result.data?['getGroupMembers']?['data']?['items'] as List<dynamic>?;
     if (items == null) return [];
     return items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
@@ -113,41 +105,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _loading = true;
 
     try {
-      // const query = r'''
-      //   query GetMessages($input: GetMessagesInput!) {
-      //     getMessages(input: $input) {
-      //       data {
-      //         items {
-      //           id
-      //           content
-      //           contentType
-      //           ciphertextBase64
-      //           senderId
-      //           senderDeviceId
-      //           groupId
-      //           createdAt
-      //         }
-      //       }
-      //       success
-      //       error
-      //     }
-      //   }
-      // ''';
-
-      // final result = await widget.services.gql.query(query, variables: {
-      //   'input': {
-      //     'groupId': widget.groupId,
-      //     'page': 1,
-      //     'limit': 200,
-      //   }
-      // });
-
-      // final data = result['getMessages'];
-      // if (data == null || data['success'] != true) {
-      //   debugPrint('getMessages failed: ${data?['error']}');
-      //   return;
-      // }
-
       const query = r'''
         query GetMessages($input: GetMessagesInput!) {
           getMessages(input: $input) {
@@ -179,7 +136,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (result.hasException) {
         debugPrint('getMessages exception: ${result.exception}');
-        // return [];
       }
 
       final data = result.data?['getMessages'];
@@ -187,11 +143,6 @@ class _ChatScreenState extends State<ChatScreen> {
         debugPrint('getMessages failed: ${data?['error']}');
         return;
       }
-
-      // final data = result.data?['getMessages'];
-      // if (data == null || data['success'] != true) return [];
-      // final items = data['data']?['items'] as List<dynamic>?;
-      // if (items == null) return [];
 
       final items = data['data']?['items'] as List<dynamic>? ?? [];
       final msgs = <ChatMessage>[];
@@ -212,40 +163,55 @@ class _ChatScreenState extends State<ChatScreen> {
 
         if (contentType == 'E2EE') {
           final ct = m['ciphertextBase64'] as String?;
+
+          // ===== DEBUG LOGS =====
+          debugPrint('========================================');
+          debugPrint('🔍 Attempting to decrypt message');
+          debugPrint('Message ID: ${m['id']}');
+          debugPrint('GroupId: $groupId');
+          debugPrint('SenderId: $senderId');
+          debugPrint('SenderDeviceId: $senderDeviceId');
+          debugPrint('My UserId: ${widget.services.myUserId}');
+          debugPrint('My DeviceId: ${widget.services.myDeviceId}');
+          debugPrint('Ciphertext length: ${ct?.length ?? 0}');
+          debugPrint('Ciphertext (first 50 chars): ${ct?.substring(0, ct.length > 50 ? 50 : ct.length)}');
+          // ===== END DEBUG LOGS =====
+
           if (ct != null && ct.isNotEmpty) {
-            plaintext =
-                await widget.services.signalClient.tryDecryptGroupMessage(
-              groupId: groupId,
-              senderId: senderId,
-              senderDeviceId: senderDeviceId,
-              ciphertextBase64: ct,
-            );
+            try {
+              plaintext = await widget.services.signalClient.tryDecryptGroupMessage(
+                groupId: groupId,
+                senderId: senderId,
+                senderDeviceId: senderDeviceId,
+                ciphertextBase64: ct,
+              );
+              debugPrint('✅ Decryption SUCCESS: $plaintext');
+            } catch (e, stackTrace) {
+              debugPrint('❌ Decryption ERROR: $e');
+              debugPrint('Stack trace: $stackTrace');
+              plaintext = '[cannot decrypt: ${e.toString()}]';
+            }
           }
         } else if (contentType == 'E2EE_SYSTEM') {
           // System message để setup sender keys
           final ct = m['ciphertextBase64'] as String?;
+          debugPrint('🔧 Processing E2EE_SYSTEM message from $senderId ($senderDeviceId)');
           if (ct != null && ct.isNotEmpty) {
-            await widget.services.signalClient.handleSystemMessage(
-              fromUserId: senderId,
-              fromDeviceId: senderDeviceId,
-              ciphertextBase64: ct,
-            );
+            try {
+              await widget.services.signalClient.handleSystemMessage(
+                fromUserId: senderId,
+                fromDeviceId: senderDeviceId,
+                ciphertextBase64: ct,
+              );
+              debugPrint('✅ System message processed successfully');
+            } catch (e) {
+              debugPrint('❌ System message processing error: $e');
+            }
           }
           continue; // Không hiển thị system message
         } else {
           // Tin nhắn không mã hóa - bỏ qua trong demo này
-          // tôi muốn mã hoá tất cả
-          // final ct = m['ciphertextBase64'] as String?;
-          // if (ct != null && ct.isNotEmpty) {
-          //   plaintext =
-          //       await widget.services.signalClient.tryDecryptGroupMessage(
-          //     groupId: groupId,
-          //     senderId: senderId,
-          //     senderDeviceId: senderDeviceId,
-          //     ciphertextBase64: ct,
-          //   );
-          // }
-
+          debugPrint('⚠️ Skipping non-E2EE message type: $contentType');
           continue;
         }
 
@@ -281,8 +247,9 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         }
       }
-    } catch (e) {
-      debugPrint('loadMessages error: $e');
+    } catch (e, stackTrace) {
+      debugPrint('❌ loadMessages error: $e');
+      debugPrint('Stack trace: $stackTrace');
     } finally {
       _loading = false;
     }
@@ -340,65 +307,22 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Future<void> _sendMessage() async {
-  //   final text = _input.text.trim();
-  //   if (text.isEmpty || _sending) return;
-
-  //   setState(() => _sending = true);
-  //   _input.clear();
-
-  //   try {
-  //     // Encrypt message với Signal group cipher
-  //     final ciphertextBytes =
-  //         await widget.services.signalClient.encryptGroupPlaintext(
-  //       groupId: widget.groupId,
-  //       plaintext: text,
-  //     );
-  //     final ctBase64 = base64Encode(ciphertextBytes);
-
-  //     // Gửi encrypted message lên backend với type E2EE
-  //     final result = await widget.services.gql.sendEncryptedMessage(
-  //       groupId: widget.groupId,
-  //       recipientId: null,
-  //       deviceId: widget.services.myDeviceId,
-  //       ciphertextBase64: ctBase64,
-  //       contentType: 'E2EE',
-  //     );
-
-  //     // Kiểm tra kết quả
-  //     final sendResult = result['sendMessageWithContent'];
-  //     if (sendResult == null || sendResult['success'] != true) {
-  //       throw Exception(sendResult?['error'] ??
-  //           sendResult?['message'] ??
-  //           'Failed to send message');
-  //     }
-
-  //     // Reload messages
-  //     await _loadMessages(widget.groupId);
-  //     _scrollToBottom();
-  //   } catch (e) {
-  //     if (mounted) {
-  //       print('Error sending message: $e');
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(content: Text('Failed to send: $e')),
-  //       );
-  //     }
-  //   } finally {
-  //     setState(() => _sending = false);
-  //   }
-  // }
-
   Future<void> _sendMessage() async {
     final text = _input.text.trim();
     if (text.isEmpty) return;
     _input.clear();
+
+    debugPrint('📤 Sending message: $text');
+
     try {
       final ciphertextBytes =
-          await widget.services.signalClient.encryptGroupPlaintext(
+      await widget.services.signalClient.encryptGroupPlaintext(
         groupId: widget.groupId,
         plaintext: text,
       );
       final ctBase64 = base64Encode(ciphertextBytes);
+
+      debugPrint('✅ Message encrypted, length: ${ctBase64.length}');
 
       await widget.services.gql.sendEncryptedMessage(
         groupId: widget.groupId,
@@ -407,14 +331,17 @@ class _ChatScreenState extends State<ChatScreen> {
         ciphertextBase64: ctBase64,
         contentType: 'E2EE',
       );
-      // await _loadMessages(
-      //   widget.groupId,
-      // );
-    } catch (e) {
-      print('Error sending message: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send: $e')),
-      );
+
+      debugPrint('✅ Message sent successfully');
+    } catch (e, stackTrace) {
+      debugPrint('❌ Error sending message: $e');
+      debugPrint('Stack trace: $stackTrace');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send: $e')),
+        );
+      }
     }
   }
 
@@ -444,34 +371,34 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: _messages.isEmpty
                 ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.lock_outline,
-                            size: 64, color: Colors.grey[400]),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No messages yet',
-                          style:
-                              TextStyle(fontSize: 16, color: Colors.grey[600]),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Send a message to start',
-                          style: TextStyle(color: Colors.grey[500]),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(12),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
-                      final m = _messages[index];
-                      return _buildMessageBubble(m);
-                    },
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.lock_outline,
+                      size: 64, color: Colors.grey[400]),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No messages yet',
+                    style:
+                    TextStyle(fontSize: 16, color: Colors.grey[600]),
                   ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Send a message to start',
+                    style: TextStyle(color: Colors.grey[500]),
+                  ),
+                ],
+              ),
+            )
+                : ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(12),
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                final m = _messages[index];
+                return _buildMessageBubble(m);
+              },
+            ),
           ),
           const Divider(height: 1),
           _buildInputBar(),
@@ -565,17 +492,17 @@ class _ChatScreenState extends State<ChatScreen> {
             backgroundColor: Colors.blue,
             child: _sending
                 ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    ),
-                  )
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2,
+              ),
+            )
                 : IconButton(
-                    icon: const Icon(Icons.send, color: Colors.white),
-                    onPressed: _sendMessage,
-                  ),
+              icon: const Icon(Icons.send, color: Colors.white),
+              onPressed: _sendMessage,
+            ),
           ),
         ],
       ),

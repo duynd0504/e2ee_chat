@@ -271,9 +271,11 @@ class _GroupListScreenState extends State<GroupListScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Name: $groupName', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('Name: $groupName',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            const Text('Group ID:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Group ID:',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             SelectableText(
               groupId,
               style: const TextStyle(
@@ -349,34 +351,41 @@ class _GroupListScreenState extends State<GroupListScreen> {
 
   Future<void> _renameGroup(String groupId, String newName) async {
     try {
-      const mutation = '''
-        mutation UpdateGroup(\$groupId: String!, \$name: String!) {
-          updateGroup(groupId: \$groupId, input: { name: \$name }) {
+      // Mutation theo đúng schema backend - dùng runMutation thay vì mutate
+      const mutation = r'''
+        mutation UpdateGroup($groupId: String!, $input: UpdateGroupInput!) {
+          updateGroup(groupId: $groupId, input: $input) {
             success
             message
           }
         }
       ''';
 
-      final result = await widget.services.gql.mutate(
+      final result = await widget.services.gql.runMutation(
         mutation,
         variables: {
           'groupId': groupId,
-          'name': newName,
+          'input': {
+            'name': newName,
+          }
         },
       );
 
-      if (result['updateGroup']?['success'] == true) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Group renamed successfully')),
-          );
-        }
-        await _loadGroups();
-      } else {
-        throw Exception(
-            result['updateGroup']?['message'] ?? 'Failed to rename group');
+      if (result.hasException) {
+        throw Exception(result.exception.toString());
       }
+
+      final data = result.data?['updateGroup'];
+      if (data == null || data['success'] != true) {
+        throw Exception(data?['message'] ?? 'Failed to rename group');
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Group renamed successfully')),
+        );
+      }
+      await _loadGroups();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -443,9 +452,10 @@ class _GroupListScreenState extends State<GroupListScreen> {
 
   Future<void> _createGroup(String name, String description) async {
     try {
-      const mutation = '''
-        mutation CreateGroup(\$name: String!, \$description: String) {
-          createGroup(name: \$name, description: \$description) {
+      // Mutation theo đúng schema backend - dùng runMutation thay vì mutate
+      const mutation = r'''
+        mutation CreateGroup($input: CreateGroupInput!) {
+          createGroup(input: $input) {
             success
             message
             data {
@@ -457,25 +467,31 @@ class _GroupListScreenState extends State<GroupListScreen> {
         }
       ''';
 
-      final result = await widget.services.gql.mutate(
+      final result = await widget.services.gql.runMutation(
         mutation,
         variables: {
-          'name': name,
-          'description': description.isEmpty ? null : description,
+          'input': {
+            'name': name,
+            'description': description.isEmpty ? null : description,
+          }
         },
       );
 
-      if (result['createGroup']?['success'] == true) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Group created successfully')),
-          );
-        }
-        await _loadGroups();
-      } else {
-        throw Exception(
-            result['createGroup']?['message'] ?? 'Failed to create group');
+      if (result.hasException) {
+        throw Exception(result.exception.toString());
       }
+
+      final data = result.data?['createGroup'];
+      if (data == null || data['success'] != true) {
+        throw Exception(data?['message'] ?? 'Failed to create group');
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Group created successfully')),
+        );
+      }
+      await _loadGroups();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

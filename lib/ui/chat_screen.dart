@@ -58,6 +58,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     // Poll messages mỗi 3 giây
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      _loadMessages(
+        widget.groupId,
+      );
       // getMessagesForGroup(widget.groupId).then((msgs) {
       //   debugPrint(
       //       'Polled ${msgs.length} messages for group ${widget.groupId}');
@@ -231,12 +234,22 @@ class _ChatScreenState extends State<ChatScreen> {
           continue; // Không hiển thị system message
         } else {
           // Tin nhắn không mã hóa - bỏ qua trong demo này
+          // tôi muốn mã hoá tất cả
+          // final ct = m['ciphertextBase64'] as String?;
+          // if (ct != null && ct.isNotEmpty) {
+          //   plaintext =
+          //       await widget.services.signalClient.tryDecryptGroupMessage(
+          //     groupId: groupId,
+          //     senderId: senderId,
+          //     senderDeviceId: senderDeviceId,
+          //     ciphertextBase64: ct,
+          //   );
+          // }
+
           continue;
         }
 
-        if (plaintext == null) {
-          plaintext = '[cannot decrypt]';
-        }
+        plaintext ??= '[cannot decrypt]';
 
         msgs.add(ChatMessage(
           id: m['id'] as String,

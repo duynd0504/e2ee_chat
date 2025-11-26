@@ -189,7 +189,6 @@ class GraphQLService {
         mutation SendMessageWithContent($input: SendGroupMessageBySenderKeyInput!) {
           sendMessageWithContent(input: $input) {
             success
-            error
             data {
               id
             }

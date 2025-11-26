@@ -105,29 +105,47 @@ class SignalClient {
 
     // Mutation GraphQL
     const mutation = r'''
-mutation RegisterSignalKey($input: SignalKeyCreateInput!) {
-  registerSignalKey(input: $input) {
-    success
-    data {
-      id
-    }
-  }
-}
-''';
+        mutation RegisterSignalKey($input: SignalKeyCreateInput!) {
+          registerSignalKey(input: $input) {
+            success
+            data {
+              id
+            }
+          }
+        }
+        ''';
 
     // Gửi mutation đến backend
-    await gql.mutate(
-      mutation,
-      variables: {
-        'input': {
-          'identityKey': base64Encode(identityKeyBytes),
-          'signedPreKey': base64Encode(signedPreKeyBytes),
-          'signedPreKeySig': base64Encode(signedPreKeySigBytes),
-          'oneTimePreKeys': oneTimePreKeys,
-          'deviceId': myDeviceId,
-        }
-      },
-    );
+    // await gql.mutate(
+    //   mutation,
+    //   variables: {
+    //     'input': {
+    //       'identityKey': base64Encode(identityKeyBytes),
+    //       'signedPreKey': base64Encode(signedPreKeyBytes),
+    //       'signedPreKeySig': base64Encode(signedPreKeySigBytes),
+    //       'oneTimePreKeys': oneTimePreKeys,
+    //       'deviceId': myDeviceId,
+    //     }
+    //   },
+    // );
+    final variables = {
+      'input': {
+        'identityKey': base64Encode(identityKeyBytes),
+        'signedPreKey': base64Encode(signedPreKeyBytes),
+        'signedPreKeySig': base64Encode(signedPreKeySigBytes),
+        'oneTimePreKeys': oneTimePreKeys,
+        'deviceId': myDeviceId,
+      }
+    };
+    final result = await gql.runMutation(mutation, variables: variables);
+    if (result.hasException) {
+      debugPrint('registerSignalKey exception: ${result.exception}');
+      return;
+    }
+    final data = result.data?['registerSignalKey'];
+    if (data == null || data['success'] != true) {
+      debugPrint('registerSignalKey failed: $data');
+    }
   }
 
   int _deviceAddressId(String deviceId) {
@@ -198,7 +216,7 @@ mutation RegisterSignalKey($input: SignalKeyCreateInput!) {
     ///
     ///đoạn này đang bị map sai cần chờ be
     ///
-    final preKeyPublicBytes = base64Decode('1');
+    final preKeyPublicBytes = base64Decode(firstPreKey['publicKey'] as String);
 
     final signedPreKeyBytes = base64Decode(signalKey['signedPreKey'] as String);
     final signedPreKeySigBytes =
